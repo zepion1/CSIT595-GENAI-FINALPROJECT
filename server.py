@@ -1,27 +1,41 @@
 """
-FastAPI middleware server — receives image/video from the Raspberry Pi,
-queries an Ollama vision model, and forwards the result to the frontend.
+FastAPI middleware server — receives image from the Raspberry Pi,
+queries an Ollama vision model, stores recent alerts in memory,
+and serves them to a frontend dashboard.
 """
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
 import httpx
 import base64
 import logging
 import traceback
 import tempfile
 import os
+import uuid
+from datetime import datetime
+from collections import deque
+from pathlib import Path
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger("server")
 
-app = FastAPI()
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 
 OLLAMA_URL   = "http://localhost:11434/api/generate"
-FRONTEND_URL = ""
 MODEL        = "llava:7b"
 API_KEY      = "change-me-to-something-secret"
-VIDEO_KEY_FRAMES = 4
+
+VIDEO_KEY_FRAMES   = 4
+SNAPSHOTS_DIR      = Path("/content/snapshots")
+MAX_ALERT_HISTORY  = 100
+
+SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 PROMPT_IMAGE = (
     "You are a security camera AI. Describe what is happening in this image "
@@ -35,6 +49,31 @@ PROMPT_VIDEO = (
     "vehicles, or any unusual activity. Note any changes between frames."
 )
 
+# In-memory alert store, newest appended last
+alert_history = deque(maxlen=MAX_ALERT_HISTORY)
+
+
+# ---------------------------------------------------------------------------
+# FastAPI app
+# ---------------------------------------------------------------------------
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Serve saved snapshots so the frontend can render them inline
+app.mount("/snapshots", StaticFiles(directory=str(SNAPSHOTS_DIR)), name="snapshots")
+
+
+# ---------------------------------------------------------------------------
+# Video frame extraction (kept for future use; not called by the image-only Pi)
+# ---------------------------------------------------------------------------
 
 def extract_key_frames(video_bytes, n_frames=VIDEO_KEY_FRAMES):
     import cv2
@@ -52,12 +91,9 @@ def extract_key_frames(video_bytes, n_frames=VIDEO_KEY_FRAMES):
             tmp_path = new_path
             cap = cv2.VideoCapture(tmp_path)
             if not cap.isOpened():
-                log.error("OpenCV could not open the video file")
                 return []
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        log.debug("Video has %d frames, extracting %d", total_frames, n_frames)
-
         if total_frames == 0:
             return []
 
@@ -74,7 +110,6 @@ def extract_key_frames(video_bytes, n_frames=VIDEO_KEY_FRAMES):
             b64_frames.append(base64.b64encode(buf.tobytes()).decode())
 
         cap.release()
-        log.info("Extracted %d key frames from video", len(b64_frames))
         return b64_frames
 
     except Exception:
@@ -85,8 +120,12 @@ def extract_key_frames(video_bytes, n_frames=VIDEO_KEY_FRAMES):
             os.unlink(tmp_path)
 
 
+# ---------------------------------------------------------------------------
+# Ollama
+# ---------------------------------------------------------------------------
+
 async def query_ollama(b64_images, prompt):
-    log.debug("Sending %d image(s) to Ollama model '%s'", len(b64_images), MODEL)
+    log.debug("Sending %d image(s) to Ollama '%s'", len(b64_images), MODEL)
     try:
         async with httpx.AsyncClient(timeout=180) as client:
             r = await client.post(OLLAMA_URL, json={
@@ -106,12 +145,15 @@ async def query_ollama(b64_images, prompt):
         raise HTTPException(status_code=504, detail="Ollama timed out")
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:400]
-        log.error("Ollama HTTP %d: %s", exc.response.status_code, body)
         raise HTTPException(status_code=502, detail=f"Ollama returned {exc.response.status_code}: {body}")
     except Exception as e:
         log.error("Ollama query failed: %s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
@@ -119,9 +161,30 @@ async def health():
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get("http://localhost:11434/api/tags")
             models = [m["name"] for m in r.json().get("models", [])]
-        return {"fastapi": "ok", "ollama": "ok", "models": models}
+        return {
+            "fastapi":     "ok",
+            "ollama":      "ok",
+            "models":      models,
+            "alert_count": len(alert_history),
+        }
     except Exception as e:
         return {"fastapi": "ok", "ollama": "error", "detail": str(e)}
+
+
+@app.get("/alerts")
+async def get_alerts(limit: int = 50):
+    """Return recent alerts, newest first."""
+    items = list(alert_history)[-limit:]
+    items.reverse()
+    return {"alerts": items}
+
+
+@app.delete("/alerts")
+async def clear_alerts():
+    """Clear all stored alerts (snapshots on disk are kept)."""
+    n = len(alert_history)
+    alert_history.clear()
+    return {"cleared": n}
 
 
 @app.post("/analyze")
@@ -135,6 +198,7 @@ async def analyze(
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
+    # --- Read snapshot ---
     try:
         image_bytes = await image.read()
         image_b64   = base64.b64encode(image_bytes).decode()
@@ -142,45 +206,52 @@ async def analyze(
     except Exception:
         raise HTTPException(status_code=400, detail="Could not read image field")
 
-    use_video = False
+    # --- Save snapshot to disk so frontend can render it ---
+    alert_id  = uuid.uuid4().hex[:12]
+    base_name = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + f"_{alert_id}"
+    snap_path = SNAPSHOTS_DIR / f"{base_name}.jpg"
+    with open(snap_path, "wb") as f:
+        f.write(image_bytes)
+    image_url = f"/snapshots/{snap_path.name}"
+
+    # --- Decide image vs video pipeline ---
+    use_video  = False
     b64_images = [image_b64]
-    prompt = PROMPT_IMAGE
+    prompt     = PROMPT_IMAGE
 
     if video is not None:
         try:
             video_bytes = await video.read()
-            log.debug("Video received: %d bytes", len(video_bytes))
             if len(video_bytes) > 0:
                 key_frames = extract_key_frames(video_bytes, VIDEO_KEY_FRAMES)
                 if key_frames:
                     use_video  = True
                     b64_images = key_frames
                     prompt     = PROMPT_VIDEO.format(n=len(key_frames))
-                    log.info("Using %d video key frames", len(key_frames))
         except Exception:
             log.error("Video processing failed: %s", traceback.format_exc())
-            log.warning("Falling back to snapshot")
 
-    if not use_video:
-        log.info("Using snapshot image")
-
+    # --- Query Ollama ---
     description = await query_ollama(b64_images, prompt)
 
-    if FRONTEND_URL:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(FRONTEND_URL, json={
-                    "timestamp":      timestamp,
-                    "motion_regions": motion_regions,
-                    "description":    description,
-                    "image_b64":      image_b64,
-                    "used_video":     use_video,
-                })
-        except Exception as e:
-            log.warning("Could not reach frontend: %s", e)
+    # --- Build alert record + store + return ---
+    alert = {
+        "id":             alert_id,
+        "timestamp":      timestamp,
+        "description":    description,
+        "motion_regions": motion_regions,
+        "image_url":      image_url,
+        "used_video":     use_video,
+        "frames_used":    len(b64_images),
+        "model":          MODEL,
+    }
+
+    alert_history.append(alert)
+    log.info("Alert stored [%s] %d regions — %s", alert_id, motion_regions, description[:80])
 
     return JSONResponse({
         "status":      "ok",
+        "alert":       alert,
         "description": description,
         "used_video":  use_video,
         "frames_used": len(b64_images),

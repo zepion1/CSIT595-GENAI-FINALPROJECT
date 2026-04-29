@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Motion Detection Feed</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0c0d10;
+      --surface:   #14161a;
+      --surface2:  #1c1f24;
+      --border:    rgba(255,255,255,0.08);
+      --border2:   rgba(255,255,255,0.16);
+      --text:      #e8e9eb;
+      --muted:     #8b8e94;
+      --hint:      #555861;
+      --accent:    #4a9eff;
+      --success:   #4ade80;
+      --warning:   #fbbf24;
+      --danger:    #f87171;
+      --mono:      'JetBrains Mono', monospace;
+      --sans:      'Inter', sans-serif;
+      --radius:    8px;
+      --radius-sm: 5px;
+    }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    .app { max-width: 1280px; margin: 0 auto; padding: 28px 24px 80px; }
+
+    /* ── Header ────────────────────────────────────────────── */
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; padding-bottom: 18px;
+      border-bottom: 0.5px solid var(--border);
+      flex-wrap: wrap; gap: 14px;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--success); box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+    }
+    .brand h1 { font-size: 16px; font-weight: 500; letter-spacing: 0.04em; }
+    .clock { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+    /* ── Connection bar ────────────────────────────────────── */
+    .conn-bar {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface); border: 0.5px solid var(--border);
+      border-radius: var(--radius); padding: 12px 14px;
+      margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .conn-label { font-family: var(--mono); font-size: 11px; color: var(--hint); white-space: nowrap; }
+    .conn-input {
+      font-family: var(--mono); font-size: 12px; color: var(--text);
+      background: var(--surface2); border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 6px 10px;
+      flex: 1; min-width: 220px;
+    }
+    .conn-input:focus { outline: none; border-color: var(--accent); }
+    .conn-status {
+      font-family: var(--mono); font-size: 11px;
+      padding: 5px 10px; border-radius: var(--radius-sm);
+      white-space: nowrap; border: 0.5px solid transparent;
+    }
+    .conn-status.live  { background: rgba(74, 222, 128, 0.12); color: var(--success); border-color: rgba(74, 222, 128, 0.3); }
+    .conn-status.error { background: rgba(248, 113, 113, 0.12); color: var(--danger);  border-color: rgba(248, 113, 113, 0.3); }
+    .conn-status.idle  { background: var(--surface2); color: var(--hint); border-color: var(--border); }
+
+    .poll-group { display: flex; align-items: center; gap: 6px; }
+    .poll-group label { font-family: var(--mono); font-size: 11px; color: var(--hint); }
+    select, .btn {
+      font-family: var(--mono); font-size: 11px; color: var(--text);
+      background: var(--surface2); border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 5px 10px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    select:hover, .btn:hover { border-color: var(--border2); }
+    select:focus { outline: none; border-color: var(--accent); }
+    .btn-primary {
+      background: var(--accent); color: var(--bg);
+      border-color: var(--accent); font-weight: 500;
+    }
+    .btn-primary:hover { background: #6bb1ff; border-color: #6bb1ff; }
+    .btn-danger { color: var(--danger); border-color: rgba(248, 113, 113, 0.3); }
+    .btn-danger:hover { background: rgba(248, 113, 113, 0.1); }
+
+    /* ── Stats row ─────────────────────────────────────────── */
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px; margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--surface); border: 0.5px solid var(--border);
+      border-radius: var(--radius); padding: 14px 16px;
+    }
+    .stat-label {
+      font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+      color: var(--hint); text-transform: uppercase; margin-bottom: 6px;
+    }
+    .stat-value { font-size: 26px; font-weight: 600; line-height: 1; font-feature-settings: 'tnum'; }
+    .stat-card.accent .stat-value { color: var(--accent); }
+    .stat-card.success .stat-value { color: var(--success); }
+    .stat-card.warning .stat-value { color: var(--warning); }
+
+    /* ── Toolbar ───────────────────────────────────────────── */
+    .toolbar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .spacer { flex: 1; }
+    .toolbar-label { font-size: 12px; color: var(--muted); }
+
+    /* ── Feed grid ─────────────────────────────────────────── */
+    .feed {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 14px;
+    }
+    .alert-card {
+      background: var(--surface); border: 0.5px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+    .alert-card:hover { border-color: var(--border2); }
+    .alert-card.new-flash { animation: new-flash 1.6s ease; }
+    @keyframes new-flash {
+      0%   { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+      100% { border-color: var(--border); box-shadow: none; }
+    }
+
+    .image-wrap {
+      width: 100%; aspect-ratio: 16 / 9;
+      background: #000; position: relative; overflow: hidden;
+    }
+    .card-image {
+      width: 100%; height: 100%; display: block;
+      object-fit: cover; cursor: zoom-in;
+      transition: opacity 0.2s;
+    }
+    .card-image.loading { opacity: 0; }
+    .image-placeholder {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 8px; padding: 12px;
+      color: var(--hint); pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .image-placeholder.hidden { opacity: 0; }
+    .image-placeholder svg { opacity: 0.4; }
+    .image-placeholder .ph-text {
+      font-family: var(--mono); font-size: 10px;
+      text-align: center; word-break: break-all;
+      max-width: 90%; opacity: 0.7;
+    }
+    .image-placeholder.error { color: var(--danger); }
+
+    .card-body { padding: 12px 14px 14px; }
+    .card-meta {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; margin-bottom: 8px;
+    }
+    .card-time { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .card-pill {
+      font-family: var(--mono); font-size: 10px;
+      padding: 2px 8px; border-radius: 10px;
+      background: var(--surface2); color: var(--muted);
+      border: 0.5px solid var(--border);
+    }
+    .card-pill.high {
+      color: var(--warning); border-color: rgba(251, 191, 36, 0.3);
+      background: rgba(251, 191, 36, 0.08);
+    }
+    .card-desc {
+      font-size: 13.5px; line-height: 1.55; color: var(--text); margin-bottom: 10px;
+      display: -webkit-box; -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .card-desc.expanded { -webkit-line-clamp: unset; }
+    .card-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 8px; padding-top: 10px;
+      border-top: 0.5px solid var(--border);
+    }
+    .card-id { font-family: var(--mono); font-size: 10px; color: var(--hint); }
+    .card-action {
+      font-family: var(--mono); font-size: 10px; color: var(--muted);
+      background: transparent; border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 3px 8px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .card-action:hover { color: var(--text); border-color: var(--border2); }
+
+    /* ── Empty state ───────────────────────────────────────── */
+    .empty {
+      text-align: center; padding: 80px 20px; color: var(--hint);
+    }
+    .empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
+    .empty-text { font-family: var(--mono); font-size: 12px; }
+    .empty-hint { margin-top: 6px; font-size: 11px; color: var(--hint); opacity: 0.7; }
+
+    /* ── Lightbox ──────────────────────────────────────────── */
+    .lightbox {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      display: none; align-items: center; justify-content: center;
+      z-index: 1000; padding: 40px; cursor: zoom-out;
+    }
+    .lightbox.show { display: flex; }
+    .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+    /* ── Toast ─────────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--surface2); border: 0.5px solid var(--border2);
+      border-radius: var(--radius); padding: 10px 16px;
+      font-family: var(--mono); font-size: 12px; color: var(--text);
+      opacity: 0; transform: translateY(8px);
+      transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none; z-index: 999;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border2); }
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <div class="header">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <h1>Motion Detection Feed</h1>
+    </div>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+
+  <div class="conn-bar">
+    <span class="conn-label">SERVER</span>
+    <input class="conn-input" id="server-url" type="text"
+           value="https://september-festivity-legislate.ngrok-free.dev"
+           spellcheck="false"
+           placeholder="https://your-ngrok-url.ngrok-free.app" />
+    <span class="conn-status idle" id="conn-status">● IDLE</span>
+    <div class="poll-group">
+      <label>poll</label>
+      <select id="poll-interval">
+        <option value="2000">2s</option>
+        <option value="5000" selected>5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" id="btn-connect">Connect</button>
+    <button class="btn" id="btn-disconnect" style="display:none">Disconnect</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">total alerts</div>
+      <div class="stat-value" id="stat-total">0</div>
+    </div>
+    <div class="stat-card accent">
+      <div class="stat-label">last 5 min</div>
+      <div class="stat-value" id="stat-recent">0</div>
+    </div>
+    <div class="stat-card warning">
+      <div class="stat-label">high activity</div>
+      <div class="stat-value" id="stat-high">0</div>
+    </div>
+    <div class="stat-card success">
+      <div class="stat-label">last alert</div>
+      <div class="stat-value" id="stat-last" style="font-size:16px; font-family:var(--mono);">—</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <span class="toolbar-label">Sort:</span>
+    <select id="sort-mode">
+      <option value="newest">newest first</option>
+      <option value="oldest">oldest first</option>
+      <option value="regions">most motion regions</option>
+    </select>
+    <div class="spacer"></div>
+    <button class="btn btn-danger" id="btn-clear">Clear feed</button>
+  </div>
+
+  <div class="feed" id="feed">
+    <div class="empty" style="grid-column: 1 / -1;">
+      <div class="empty-icon">⊘</div>
+      <div class="empty-text">// not connected</div>
+      <div class="empty-hint">paste your server URL above and click Connect</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="lightbox" id="lightbox">
+  <img id="lightbox-img" alt="" />
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ── Config ─────────────────────────────────────────────── */
+const HIGH_REGIONS_THRESHOLD = 4;
+
+/* ── State ──────────────────────────────────────────────── */
+let alerts = [];
+let knownIds = new Set();
+let pollTimer = null;
+let connected = false;
+let serverBase = "";
+
+/* ── DOM refs ───────────────────────────────────────────── */
+const feed         = document.getElementById('feed');
+const connStatus   = document.getElementById('conn-status');
+const serverInput  = document.getElementById('server-url');
+const pollSelect   = document.getElementById('poll-interval');
+const sortSelect   = document.getElementById('sort-mode');
+const toastEl      = document.getElementById('toast');
+const lightbox     = document.getElementById('lightbox');
+const lightboxImg  = document.getElementById('lightbox-img');
+
+/* ── Clock ──────────────────────────────────────────────── */
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8);
+}, 1000);
+
+/* ── Toast ──────────────────────────────────────────────── */
+let toastTimer;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+}
+
+/* ── Connection status ──────────────────────────────────── */
+function setStatus(state, label) {
+  connStatus.className = 'conn-status ' + state;
+  connStatus.textContent = '● ' + label;
+}
+
+/* ── URL helpers ────────────────────────────────────────── */
+function normalizeUrl(input) {
+  let v = input.trim().replace(/\/$/, '');
+  if (!v.startsWith('http://') && !v.startsWith('https://')) {
+    v = 'https://' + v;
+  }
+  return v;
+}
+
+/* Build a full image URL with the ngrok skip param.
+   ngrok free tier serves an HTML interstitial on the first visit to a
+   path unless you either send the X-Header or include the query param.
+   <img> tags can't send headers, so we use the query param. */
+function buildImageUrl(imagePath) {
+  if (!imagePath) return '';
+  const full = imagePath.startsWith('http') ? imagePath : serverBase + imagePath;
+  const sep  = full.includes('?') ? '&' : '?';
+  return full + sep + 'ngrok-skip-browser-warning=true';
+}
+
+/* ── Formatters ─────────────────────────────────────────── */
+function fmtTime(ts) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ts || '—'; }
+}
+function fmtRelative(ts) {
+  try {
+    const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (diff < 60)    return Math.floor(diff) + 's ago';
+    if (diff < 3600)  return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  } catch { return '—'; }
+}
+
+/* ── Stats ──────────────────────────────────────────────── */
+function updateStats() {
+  document.getElementById('stat-total').textContent = alerts.length;
+
+  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const recent = alerts.filter(a => new Date(a.timestamp).getTime() > fiveMinAgo);
+  document.getElementById('stat-recent').textContent = recent.length;
+
+  const high = alerts.filter(a => (a.motion_regions || 0) >= HIGH_REGIONS_THRESHOLD);
+  document.getElementById('stat-high').textContent = high.length;
+
+  const last = alerts[0];
+  document.getElementById('stat-last').textContent = last ? fmtRelative(last.timestamp) : '—';
+}
+
+/* ── Sort ───────────────────────────────────────────────── */
+function sortAlerts(list) {
+  const mode = sortSelect.value;
+  const sorted = [...list];
+  if (mode === 'newest') {
+    sorted.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  } else if (mode === 'oldest') {
+    sorted.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  } else if (mode === 'regions') {
+    sorted.sort((a, b) => (b.motion_regions || 0) - (a.motion_regions || 0));
+  }
+  return sorted;
+}
+
+/* ── Render ─────────────────────────────────────────────── */
+function renderFeed(newIds = new Set()) {
+  if (alerts.length === 0) {
+    feed.innerHTML = `
+      <div class="empty" style="grid-column: 1 / -1;">
+        <div class="empty-icon">◯</div>
+        <div class="empty-text">// monitoring — no alerts yet</div>
+        <div class="empty-hint">trigger motion in front of the camera to generate one</div>
+      </div>`;
+    return;
+  }
+
+  const list = sortAlerts(alerts);
+  feed.innerHTML = '';
+
+  list.forEach(alert => {
+    const card = document.createElement('div');
+    card.className = 'alert-card';
+    if (newIds.has(alert.id)) card.classList.add('new-flash');
+
+    const imageUrl = buildImageUrl(alert.image_url);
+    const isHigh   = (alert.motion_regions || 0) >= HIGH_REGIONS_THRESHOLD;
+
+    card.innerHTML = `
+      <div class="image-wrap">
+        ${imageUrl
+          ? `
+            <div class="image-placeholder" data-placeholder>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="9" cy="9" r="1.5"/>
+                <path d="M21 15l-5-5L5 21"/>
+              </svg>
+              <span class="ph-text">loading…</span>
+            </div>
+            <img class="card-image loading" src="${imageUrl}" alt="" loading="lazy" data-full="${imageUrl}" />
+          `
+          : `
+            <div class="image-placeholder">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M3 16l5-5 4 4M14 14l3-3 4 4"/>
+              </svg>
+              <span class="ph-text">no image attached</span>
+            </div>
+          `}
+      </div>
+      <div class="card-body">
+        <div class="card-meta">
+          <span class="card-time">${fmtTime(alert.timestamp)} · ${fmtRelative(alert.timestamp)}</span>
+          <span class="card-pill ${isHigh ? 'high' : ''}">${alert.motion_regions || 0} region${alert.motion_regions === 1 ? '' : 's'}</span>
+        </div>
+        <div class="card-desc" data-expandable>${escapeHtml(alert.description || '—')}</div>
+        <div class="card-footer">
+          <span class="card-id">${alert.id || ''}</span>
+          <button class="card-action" data-copy>copy text</button>
+        </div>
+      </div>`;
+
+    // Image load / error handling
+    const img = card.querySelector('.card-image');
+    if (img) {
+      const placeholder = card.querySelector('[data-placeholder]');
+
+      img.addEventListener('load', () => {
+        img.classList.remove('loading');
+        if (placeholder) placeholder.classList.add('hidden');
+      });
+
+      img.addEventListener('error', () => {
+        // Image failed to load — show diagnostic info in the placeholder
+        if (placeholder) {
+          placeholder.classList.remove('hidden');
+          placeholder.classList.add('error');
+          placeholder.innerHTML = `
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 8v4M12 16h.01"/>
+            </svg>
+            <span class="ph-text">image failed to load</span>
+            <span class="ph-text" style="opacity:0.5">${imageUrl.replace(serverBase, '')}</span>
+          `;
+        }
+        img.style.display = 'none';
+        console.warn('Image failed to load:', imageUrl);
+      });
+
+      img.addEventListener('click', () => {
+        lightboxImg.src = img.dataset.full;
+        lightbox.classList.add('show');
+      });
+    }
+
+    // Expand description on click
+    const desc = card.querySelector('[data-expandable]');
+    desc.addEventListener('click', () => desc.classList.toggle('expanded'));
+
+    // Copy description
+    card.querySelector('[data-copy]').addEventListener('click', e => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(alert.description || '')
+        .then(() => toast('// description copied'))
+        .catch(() => toast('// copy failed'));
+    });
+
+    feed.appendChild(card);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/* ── Lightbox ───────────────────────────────────────────── */
+lightbox.addEventListener('click', () => {
+  lightbox.classList.remove('show');
+  lightboxImg.src = '';
+});
+
+/* ── Polling ────────────────────────────────────────────── */
+async function fetchAlerts() {
+  try {
+    const r = await fetch(serverBase + '/alerts?limit=50', {
+      headers: { 'ngrok-skip-browser-warning': 'true' }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+
+    const data = await r.json();
+    const incoming = data.alerts || [];
+
+    const newIds = new Set();
+    incoming.forEach(a => {
+      if (!knownIds.has(a.id)) {
+        newIds.add(a.id);
+        knownIds.add(a.id);
+      }
+    });
+
+    if (alerts.length > 0 && newIds.size > 0) {
+      toast(`↑ ${newIds.size} new alert${newIds.size === 1 ? '' : 's'}`);
+    }
+
+    alerts = incoming;
+    setStatus('live', 'LIVE');
+    updateStats();
+    renderFeed(newIds);
+
+  } catch (err) {
+    console.warn('Fetch failed:', err.message);
+    setStatus('error', 'ERROR');
+  }
+}
+
+function startPolling() {
+  stopPolling();
+  const interval = parseInt(pollSelect.value);
+  fetchAlerts();
+  pollTimer = setInterval(fetchAlerts, interval);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+/* ── Connect / Disconnect ───────────────────────────────── */
+async function connect() {
+  serverBase = normalizeUrl(serverInput.value);
+  setStatus('idle', 'CONNECTING…');
+
+  try {
+    const r = await fetch(serverBase + '/health', {
+      headers: { 'ngrok-skip-browser-warning': 'true' }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const h = await r.json();
+    toast(`// connected · ollama ${h.ollama || '?'}`);
+  } catch (err) {
+    setStatus('error', 'OFFLINE');
+    toast('// connection failed');
+    return;
+  }
+
+  connected = true;
+  serverInput.disabled = true;
+  document.getElementById('btn-connect').style.display = 'none';
+  document.getElementById('btn-disconnect').style.display = '';
+  startPolling();
+}
+
+function disconnect() {
+  stopPolling();
+  connected = false;
+  serverInput.disabled = false;
+  document.getElementById('btn-connect').style.display = '';
+  document.getElementById('btn-disconnect').style.display = 'none';
+  setStatus('idle', 'IDLE');
+  toast('// disconnected');
+}
+
+async function clearFeed() {
+  if (!connected) {
+    alerts = [];
+    knownIds.clear();
+    updateStats();
+    renderFeed();
+    return;
+  }
+  if (!confirm('Clear all alerts on the server?')) return;
+  try {
+    await fetch(serverBase + '/alerts', {
+      method: 'DELETE',
+      headers: { 'ngrok-skip-browser-warning': 'true' }
+    });
+    alerts = [];
+    knownIds.clear();
+    updateStats();
+    renderFeed();
+    toast('// feed cleared');
+  } catch {
+    toast('// clear failed');
+  }
+}
+
+/* ── Event listeners ────────────────────────────────────── */
+document.getElementById('btn-connect').addEventListener('click', connect);
+document.getElementById('btn-disconnect').addEventListener('click', disconnect);
+document.getElementById('btn-clear').addEventListener('click', clearFeed);
+sortSelect.addEventListener('change', () => renderFeed());
+pollSelect.addEventListener('change', () => {
+  if (connected) startPolling();
+});
+serverInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !connected) connect();
+});
+
+/* ── Auto-connect ────────────────────────────────────────── */
+if (serverInput.value.trim()) {
+  connect();
+}
+</script>
+
+</body>
+</html>
