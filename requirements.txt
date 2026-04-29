@@ -1,0 +1,24 @@
+# IMPORTANT (Windows + GPU users):
+# `pip install torch` defaults to a CPU-only build on Windows. To use your
+# GPU, install torch + torchvision from PyTorch's CUDA index FIRST, e.g.:
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#
+# (Replace cu124 with cu121 / cu118 to match your installed CUDA driver.
+#  `nvidia-smi` shows the driver version. If unsure, cu124 works on most
+#  recent NVIDIA drivers.)
+#
+# THEN run: pip install -r requirements.txt
+# to pull the rest. Verify with:
+#   python -c "import torch; print(torch.cuda.is_available())"
+# It must print True. If False, the model will run on CPU and be very slow.
+
+torch
+torchvision
+transformers>=4.49.0
+qwen-vl-utils[decord]
+fastapi
+uvicorn[standard]
+python-multipart
+accelerate
+requests
