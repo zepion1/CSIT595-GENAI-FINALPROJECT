@@ -5,8 +5,7 @@ and serves them to a frontend dashboard.
 """
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 import httpx
@@ -62,13 +61,9 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Serve saved snapshots so the frontend can render them inline
-app.mount("/snapshots", StaticFiles(directory=str(SNAPSHOTS_DIR)), name="snapshots")
 
 
 # ---------------------------------------------------------------------------
@@ -256,3 +251,11 @@ async def analyze(
         "used_video":  use_video,
         "frames_used": len(b64_images),
     })
+
+
+@app.get("/snapshots/{filename}")
+async def serve_snapshot(filename: str):
+    img_path = SNAPSHOTS_DIR / filename
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return Response(content=img_path.read_bytes(), media_type="image/jpeg")

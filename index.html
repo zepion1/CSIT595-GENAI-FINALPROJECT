@@ -327,6 +327,7 @@ let knownIds = new Set();
 let pollTimer = null;
 let connected = false;
 let serverBase = "";
+let blobUrls = [];
 
 /* ── DOM refs ───────────────────────────────────────────── */
 const feed         = document.getElementById('feed');
@@ -367,15 +368,21 @@ function normalizeUrl(input) {
   return v;
 }
 
-/* Build a full image URL with the ngrok skip param.
-   ngrok free tier serves an HTML interstitial on the first visit to a
-   path unless you either send the X-Header or include the query param.
-   <img> tags can't send headers, so we use the query param. */
 function buildImageUrl(imagePath) {
   if (!imagePath) return '';
-  const full = imagePath.startsWith('http') ? imagePath : serverBase + imagePath;
-  const sep  = full.includes('?') ? '&' : '?';
-  return full + sep + 'ngrok-skip-browser-warning=true';
+  return imagePath.startsWith('http') ? imagePath : serverBase + imagePath;
+}
+
+/* Fetch an image through the ngrok header (img tags can't send headers).
+   Returns a blob URL that the browser can display without hitting the
+   ngrok interstitial. */
+async function fetchImageAsBlobUrl(url) {
+  const r = await fetch(url, { headers: { 'ngrok-skip-browser-warning': 'true' } });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const blob = await r.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  blobUrls.push(blobUrl);
+  return blobUrl;
 }
 
 /* ── Formatters ─────────────────────────────────────────── */
@@ -426,6 +433,9 @@ function sortAlerts(list) {
 
 /* ── Render ─────────────────────────────────────────────── */
 function renderFeed(newIds = new Set()) {
+  blobUrls.forEach(u => URL.revokeObjectURL(u));
+  blobUrls = [];
+
   if (alerts.length === 0) {
     feed.innerHTML = `
       <div class="empty" style="grid-column: 1 / -1;">
@@ -459,7 +469,7 @@ function renderFeed(newIds = new Set()) {
               </svg>
               <span class="ph-text">loading…</span>
             </div>
-            <img class="card-image loading" src="${imageUrl}" alt="" loading="lazy" data-full="${imageUrl}" />
+            <img class="card-image loading" alt="" />
           `
           : `
             <div class="image-placeholder">
@@ -483,37 +493,39 @@ function renderFeed(newIds = new Set()) {
         </div>
       </div>`;
 
-    // Image load / error handling
+    // Image load / error handling — use fetch so the ngrok header is sent
     const img = card.querySelector('.card-image');
     if (img) {
       const placeholder = card.querySelector('[data-placeholder]');
 
-      img.addEventListener('load', () => {
-        img.classList.remove('loading');
-        if (placeholder) placeholder.classList.add('hidden');
-      });
-
-      img.addEventListener('error', () => {
-        // Image failed to load — show diagnostic info in the placeholder
-        if (placeholder) {
-          placeholder.classList.remove('hidden');
-          placeholder.classList.add('error');
-          placeholder.innerHTML = `
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M12 8v4M12 16h.01"/>
-            </svg>
-            <span class="ph-text">image failed to load</span>
-            <span class="ph-text" style="opacity:0.5">${imageUrl.replace(serverBase, '')}</span>
-          `;
-        }
-        img.style.display = 'none';
-        console.warn('Image failed to load:', imageUrl);
-      });
+      fetchImageAsBlobUrl(imageUrl)
+        .then(blobUrl => {
+          img.src = blobUrl;
+          img.classList.remove('loading');
+          if (placeholder) placeholder.classList.add('hidden');
+        })
+        .catch(err => {
+          if (placeholder) {
+            placeholder.classList.remove('hidden');
+            placeholder.classList.add('error');
+            placeholder.innerHTML = `
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 8v4M12 16h.01"/>
+              </svg>
+              <span class="ph-text">image failed to load</span>
+              <span class="ph-text" style="opacity:0.5">${imageUrl.replace(serverBase, '')}</span>
+            `;
+          }
+          img.style.display = 'none';
+          console.warn('Image failed to load:', imageUrl, err.message);
+        });
 
       img.addEventListener('click', () => {
-        lightboxImg.src = img.dataset.full;
-        lightbox.classList.add('show');
+        if (img.src) {
+          lightboxImg.src = img.src;
+          lightbox.classList.add('show');
+        }
       });
     }
 
